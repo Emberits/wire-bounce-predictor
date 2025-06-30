@@ -1,0 +1,6 @@
+[server]
+enableCORS=false
+headless=true
+
+[runner]
+pythonVersion="3.10"

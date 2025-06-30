@@ -36,7 +36,7 @@ def simulate_wire_oscillations(mass_after_kg, spring_constant=10000, damping=50,
 
 def estimate_ice_thickness(weather_data, k=0.05):
     ice_thickness = 0
-    for hour in weather_
+    for hour in weather_data:
         temp = hour['temperature']
         rh = hour['humidity']
         wind_speed = hour['wind_speed']

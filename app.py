@@ -1,10 +1,11 @@
 import streamlit as st
+import pandas as pd
 import numpy as np
-from scipy.integrate import solve_ivp
-import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from imblearn.over_sampling import SMOTE
-import pandas as pd
+from scipy.integrate import solve_ivp
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # ===========================
 # 1. Физическая модель подскока провода
@@ -33,6 +34,17 @@ def simulate_wire_oscillations(mass_after_kg, spring_constant=10000, damping=50,
 
     sol = solve_ivp(dynamics, t_span, y0, t_eval=t_eval)
     return sol.t, sol.y[0]
+
+
+def plot_oscillations(time, height):
+    plt.figure(figsize=(10, 6))
+    plt.plot(time, height, label='Высота подскока (м)')
+    plt.title("Колебания провода после сброса льда")
+    plt.xlabel("Время (с)")
+    plt.ylabel("Высота подскока (м)")
+    plt.grid(True)
+    plt.legend()
+    return plt
 
 
 # ===========================
@@ -75,11 +87,13 @@ def build_ml_model():
             {'temperature': df.loc[i, 'temperature'] + np.random.uniform(-1, 1),
              'humidity': df.loc[i, 'humidity'],
              'wind_speed': df.loc[i, 'wind_speed']} for _ in range(hours_before)]
-        df.loc[i, 'estimated_ice_thickness'] = estimate_ice_thickness(hourly_data)
+        ice_thickness = estimate_ice_thickness(hourly_data)
+        df.loc[i, 'estimated_ice_thickness'] = ice_thickness
 
     X = df.drop('failure', axis=1)
     y = df['failure']
 
+    from imblearn.over_sampling import SMOTE
     smote = SMOTE()
     X_res, y_res = smote.fit_resample(X, y)
 
@@ -95,13 +109,15 @@ def build_ml_model():
 
 def predict_risk_and_bounce(input_data, ml_model, feature_columns):
     """
-    Прогнозирование риска сброса льда и амплитуды подскока провода
+    input_data — словарь с входными данными:
+        temperature, wind_speed, humidity, temp_change_last_6h,
+        precipitation, wire_diameter, span_length, month
     """
 
-    # Добавляем оценённую толщину льда
+    # Добавляем estimated_ice_thickness
     hourly_weather = [{'temperature': input_data['temperature'],
                        'humidity': input_data['humidity'],
-                       'wind_speed': input_data['wind_speed']} for _ in range(12)]
+                       'wind_speed': input_data['wind_speed']} for _ in range(12)]  # 12 часов намерзания
     input_data['estimated_ice_thickness'] = estimate_ice_thickness(hourly_weather)
 
     # Подготовка к предсказанию
@@ -115,8 +131,12 @@ def predict_risk_and_bounce(input_data, ml_model, feature_columns):
     prob_failure = ml_model.predict_proba(input_df)[0][1]
 
     if prob_failure < 0.5:
-        return {"risk": "Низкий", "message": "Сброс льда маловероятен"}
+        return {
+            "risk": "Низкий",
+            "message": "Сброс льда маловероятен"
+        }
 
+    # Расчёт массы провода до и после сброса
     diameter_mm = input_data['wire_diameter']
     span_m = input_data['span_length']
     ice_thickness_mm = input_data['estimated_ice_thickness']
@@ -144,61 +164,60 @@ def predict_risk_and_bounce(input_data, ml_model, feature_columns):
         "estimated_ice_thickness_mm": round(ice_thickness_mm, 2),
         "bounce_height_m": round(bounce_height, 2),
         "max_oscillation_m": round(max(abs(height)), 2),
+        "message": f"Вероятный подскок: {bounce_height:.2f} м",
         "plot_time": time,
         "plot_height": height
     }
 
 
 # ===========================
-# 4. Streamlit UI
+# 4. Streamlit-приложение
 # ===========================
 
-st.set_page_config(page_title="Прогноз подскока провода", layout="centered")
-st.title("🔮 Прогнозирование подскока провода при сбросе льда")
+def main():
+    st.title("Прогнозирование подскока провода при сбросе льда")
 
-# Обучаем модель один раз
-@st.cache_resource
-def load_model():
-    return build_ml_model()
+    st.sidebar.header("Входные данные")
+    temperature = st.sidebar.number_input("Температура воздуха (°C)", value=-4.0, step=0.1)
+    wind_speed = st.sidebar.number_input("Скорость ветра (м/с)", value=12.0, step=0.1)
+    humidity = st.sidebar.number_input("Относительная влажность (%)", value=90.0, step=0.1)
+    temp_change_last_6h = st.sidebar.number_input("Изменение температуры за последние 6 часов (°C)", value=1.5, step=0.1)
+    precipitation = st.sidebar.number_input("Количество осадков за последний час (мм)", value=1.0, step=0.1)
+    wire_diameter = st.sidebar.number_input("Диаметр провода (мм)", value=15.2, step=0.1)
+    span_length = st.sidebar.number_input("Длина пролёта (м)", value=300, step=1)
+    month = st.sidebar.number_input("Месяц года (1-12)", value=1, min_value=1, max_value=12)
 
-ml_model, feature_columns = load_model()
+    # Обучаем модель
+    ml_model, feature_columns = build_ml_model()
 
-# Форма ввода данных
-st.sidebar.header("🔧 Введите параметры")
-temperature = st.sidebar.slider("Температура (°C)", -10.0, 10.0, -4.0)
-wind_speed = st.sidebar.slider("Скорость ветра (м/с)", 0.0, 20.0, 12.0)
-humidity = st.sidebar.slider("Влажность (%)", 0, 100, 90)
-temp_change = st.sidebar.slider("Изменение температуры за 6 ч (°C)", -5.0, 5.0, 1.5)
-precipitation = st.sidebar.slider("Осадки за час (мм)", 0.0, 2.0, 1.0)
-wire_diameter = st.sidebar.slider("Диаметр провода (мм)", 10.0, 20.0, 15.2)
-span_length = st.sidebar.slider("Длина пролёта (м)", 100, 400, 300)
-month = st.sidebar.slider("Месяц года", 1, 12, 1)
+    # Входные данные для тестового случая
+    test_case = {
+        'temperature': temperature,
+        'wind_speed': wind_speed,
+        'humidity': humidity,
+        'temp_change_last_6h': temp_change_last_6h,
+        'precipitation': precipitation,
+        'wire_diameter': wire_diameter,
+        'span_length': span_length,
+        'month': month
+    }
 
-input_data = {
-    'temperature': temperature,
-    'wind_speed': wind_speed,
-    'humidity': humidity,
-    'temp_change_last_6h': temp_change,
-    'precipitation': precipitation,
-    'wire_diameter': wire_diameter,
-    'span_length': span_length,
-    'month': month
-}
+    # Прогнозируем риск
+    result = predict_risk_and_bounce(test_case, ml_model, feature_columns)
 
-if st.button("🚀 Выполнить прогноз"):
-    result = predict_risk_and_bounce(input_data, ml_model, feature_columns)
+    # Выводим результат
+    st.subheader("Результат прогнозирования:")
+    st.write(f"**Риск:** {result['risk']}")
+    st.write(f"**Вероятность сброса льда:** {result['probability_of_ice_shedding'] * 100:.2f}%")
+    st.write(f"**Оценённая толщина льда:** {result['estimated_ice_thickness_mm']:.2f} мм")
+    st.write(f"**Максимальная высота подскока:** {result['bounce_height_m']:.2f} м")
+    st.write(f"**Максимальная амплитуда колебаний:** {result['max_oscillation_m']:.2f} м")
+    st.write(f"**Сообщение:** {result['message']}")
 
-    st.subheader("📊 Результат прогнозирования:")
-    st.write(f"**Вероятность сброса льда:** {result.get('probability_of_ice_shedding', 0)}")
-    st.write(f"**Оценённая толщина льда:** {result.get('estimated_ice_thickness_mm', 0)} мм")
-    st.write(f"**Подскок провода:** {result.get('bounce_height_m', 0)} м")
-    st.write(f"**Максимальное отклонение:** {result.get('max_oscillation_m', 0)} м")
-    st.write(f"**Уровень риска:** {result.get('risk', 'Нет данных')}")
-
-    fig, ax = plt.subplots()
-    ax.plot(result['plot_time'], result['plot_height'])
-    ax.set_title("Колебания провода после сброса льда")
-    ax.set_xlabel("Время (с)")
-    ax.set_ylabel("Высота подскока (м)")
-    ax.grid(True)
+    # Визуализация колебаний
+    fig = plot_oscillations(result['plot_time'], result['plot_height'])
     st.pyplot(fig)
+
+
+if __name__ == "__main__":
+    main()

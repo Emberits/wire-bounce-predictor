@@ -75,7 +75,7 @@ def build_ml_model():
         'wire_diameter': [12.7, 15.2, 12.7, 15.2, 12.7, 15.2, 12.7, 15.2, 12.7, 15.2],
         'span_length': [200, 300, 250, 300, 200, 250, 300, 200, 250, 300],
         'month': [12, 1, 2, 1, 2, 12, 1, 2, 12, 1],
-        'failure': [1, 1, 0, 1, 0, 1, 1, 1, 0, 0]
+        'failure': [1, 1, 0, 1, 0, 1, 1, 1, 0, 0]  # 6 единиц и 4 нуля
     }
 
     df = pd.DataFrame(data)
@@ -93,11 +93,11 @@ def build_ml_model():
     X = df.drop('failure', axis=1)
     y = df['failure']
 
-    from imblearn.over_sampling import SMOTE
-    smote = SMOTE()
+    # Установите k_neighbors=3 (меньше, чем количество примеров в миноритарном классе)
+    smote = SMOTE(k_neighbors=3, random_state=42)  # <--- ИЗМЕНЕНИЕ ЗДЕСЬ
     X_res, y_res = smote.fit_resample(X, y)
 
-    model = RandomForestClassifier(class_weight='balanced')
+    model = RandomForestClassifier(class_weight='balanced', random_state=42)
     model.fit(X_res, y_res)
 
     return model, df.columns.tolist()
